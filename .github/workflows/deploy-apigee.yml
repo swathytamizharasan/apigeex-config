@@ -37,8 +37,14 @@ jobs:
 
       - name: Set up apigeecli
         run: |
-          rm -rf $HOME/.apigeecli
-          curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh
+          # Pin to a specific known-good version instead of downloadLatest
+          APIGEECLI_VERSION="v2.16.0"
+          curl -L -o apigeecli.zip \
+            "https://github.com/apigee/apigeecli/releases/download/${APIGEECLI_VERSION}/apigeecli_${APIGEECLI_VERSION}_Linux_x86_64.zip"
+          unzip apigeecli.zip -d apigeecli_bin
+          mkdir -p $HOME/.apigeecli/bin
+          mv apigeecli_bin/apigeecli $HOME/.apigeecli/bin/apigeecli
+          chmod +x $HOME/.apigeecli/bin/apigeecli
           echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
@@ -58,7 +64,6 @@ jobs:
 
             echo "Processing Proxy: $name from $file"
 
-            # -f = folder path, --oas-name = filename within that folder
             rev=$(apigeecli apis create openapi \
               -n "$name" \
               -f "$folder" \
