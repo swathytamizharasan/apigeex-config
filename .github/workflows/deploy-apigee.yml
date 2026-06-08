@@ -37,13 +37,14 @@ jobs:
 
       - name: Set up apigeecli
         run: |
-          # Pin to a specific known-good version instead of downloadLatest
           APIGEECLI_VERSION="v2.16.0"
           curl -L -o apigeecli.zip \
             "https://github.com/apigee/apigeecli/releases/download/${APIGEECLI_VERSION}/apigeecli_${APIGEECLI_VERSION}_Linux_x86_64.zip"
           unzip apigeecli.zip -d apigeecli_bin
+          # The zip extracts into a versioned subdirectory, use find to locate the binary
+          APIGEECLI_BIN=$(find apigeecli_bin -name "apigeecli" -type f)
           mkdir -p $HOME/.apigeecli/bin
-          mv apigeecli_bin/apigeecli $HOME/.apigeecli/bin/apigeecli
+          mv "$APIGEECLI_BIN" $HOME/.apigeecli/bin/apigeecli
           chmod +x $HOME/.apigeecli/bin/apigeecli
           echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
 
