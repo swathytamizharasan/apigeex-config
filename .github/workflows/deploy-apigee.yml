@@ -35,58 +35,117 @@ jobs:
           workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
 
-      - name: Install apigeecli
-        run: |
-          curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh -
-          echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
-
-      - name: Install jq
-        run: sudo apt-get install -y jq
+      - name: Install dependencies
+        run: sudo apt-get install -y jq zip
 
       - name: Deploy Apigee Proxies
         env:
           APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
           APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
+          APIGEE_ENV: dev
         run: |
+          set -e
+          BASE_URL="https://apigee.googleapis.com/v1/organizations/${APIGEE_ORG}"
+
           for file in proxies/*.json; do
             [[ -e "$file" ]] || { echo "No proxy JSON files found in proxies/"; exit 1; }
 
             name=$(basename "$file" .json)
-            echo "Processing Proxy: $name from $file"
+            echo "========================================="
+            echo "Processing Proxy: $name"
+            echo "========================================="
 
-            # Per official docs: -f takes the full file path, -n is the proxy name
-            create_output=$(apigeecli apis create openapi \
-              -n "$name" \
-              -f "$file" \
-              -o "$APIGEE_ORG" \
-              -t "$APIGEE_TOKEN" \
-              --no-warnings 2>&1)
+            # Step 1: Create a minimal proxy bundle zip from the JSON spec
+            tmpdir=$(mktemp -d)
+            mkdir -p "$tmpdir/apiproxy/policies" "$tmpdir/apiproxy/proxies" "$tmpdir/apiproxy/targets"
 
-            echo "Create output: $create_output"
+            # Create a basic proxy descriptor XML
+            cat > "$tmpdir/apiproxy/${name}.xml" <<EOF
+          <APIProxy name="${name}">
+            <Description>Apigee API: ${name}</Description>
+            <BasePaths>/</BasePaths>
+          </APIProxy>
+          EOF
 
-            # Get latest revision after import
-            rev=$(apigeecli apis get \
-              -n "$name" \
-              -o "$APIGEE_ORG" \
-              -t "$APIGEE_TOKEN" \
-              --no-warnings 2>&1 | jq -r '.revision[-1]')
+            # Create proxy endpoint XML
+            cat > "$tmpdir/apiproxy/proxies/default.xml" <<EOF
+          <ProxyEndpoint name="default">
+            <HTTPProxyConnection>
+              <BasePath>/$(echo $name | tr '-' '/')</BasePath>
+            </HTTPProxyConnection>
+            <RouteRule name="default">
+              <TargetEndpoint>default</TargetEndpoint>
+            </RouteRule>
+          </ProxyEndpoint>
+          EOF
 
-            echo "Revision: $rev"
+            # Create target endpoint XML using backend from JSON
+            target_url=$(jq -r '.. | objects | select(has("x-google-backend")) | ."x-google-backend".address' "$file" | head -1)
+            [[ -z "$target_url" || "$target_url" == "null" ]] && target_url="http://backend.example.com"
+
+            cat > "$tmpdir/apiproxy/targets/default.xml" <<EOF
+          <TargetEndpoint name="default">
+            <HTTPTargetConnection>
+              <URL>${target_url}</URL>
+            </HTTPTargetConnection>
+          </TargetEndpoint>
+          EOF
+
+            # Zip the bundle
+            bundle_zip="$tmpdir/${name}.zip"
+            (cd "$tmpdir" && zip -r "$bundle_zip" apiproxy/)
+            echo "Bundle created: $bundle_zip"
+
+            # Step 2: Import bundle to Apigee via REST API
+            echo "Importing proxy bundle..."
+            import_response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${APIGEE_TOKEN}" \
+              -H "Content-Type: multipart/form-data" \
+              -F "file=@${bundle_zip};type=application/zip" \
+              "${BASE_URL}/apis?action=import&name=${name}&validate=false")
+
+            http_code=$(echo "$import_response" | tail -1)
+            response_body=$(echo "$import_response" | head -n -1)
+
+            echo "Import HTTP status: $http_code"
+            echo "Import response: $response_body"
+
+            if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
+              echo "ERROR: Failed to import proxy $name (HTTP $http_code)"
+              exit 1
+            fi
+
+            # Step 3: Extract the revision number
+            rev=$(echo "$response_body" | jq -r '.revision')
+            echo "Imported revision: $rev"
 
             if [[ -z "$rev" || "$rev" == "null" ]]; then
               echo "ERROR: Could not determine revision for $name"
               exit 1
             fi
 
-            echo "Deploying revision $rev of $name to dev..."
-            apigeecli apis deploy \
-              -n "$name" \
-              -e dev \
-              -v "$rev" \
-              -o "$APIGEE_ORG" \
-              -t "$APIGEE_TOKEN" \
-              --ovr \
-              --no-warnings
+            # Step 4: Deploy the revision
+            echo "Deploying revision $rev of $name to $APIGEE_ENV..."
+            deploy_response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${APIGEE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${BASE_URL}/environments/${APIGEE_ENV}/apis/${name}/revisions/${rev}/deployments?override=true")
 
+            deploy_http_code=$(echo "$deploy_response" | tail -1)
+            deploy_body=$(echo "$deploy_response" | head -n -1)
+
+            echo "Deploy HTTP status: $deploy_http_code"
+            echo "Deploy response: $deploy_body"
+
+            if [[ "$deploy_http_code" != "200" && "$deploy_http_code" != "201" ]]; then
+              echo "ERROR: Failed to deploy proxy $name revision $rev (HTTP $deploy_http_code)"
+              exit 1
+            fi
+
+            echo "Successfully deployed $name revision $rev to $APIGEE_ENV"
+            rm -rf "$tmpdir"
           done
-          echo "Deployment successful!"
+
+          echo "All proxies deployed successfully!"
