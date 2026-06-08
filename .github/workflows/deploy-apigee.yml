@@ -35,34 +35,12 @@ jobs:
           workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
 
-      - name: Set up apigeecli
+      - name: Install apigeecli
         run: |
-          # Get the latest release version tag from GitHub API
-          APIGEECLI_VERSION=$(curl -s https://api.github.com/repos/apigee/apigeecli/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
-          echo "Installing apigeecli $APIGEECLI_VERSION"
-
-          # Download using the correct URL format with -L to follow redirects
-          curl -L -o apigeecli.zip \
-            "https://github.com/apigee/apigeecli/releases/download/${APIGEECLI_VERSION}/apigeecli_${APIGEECLI_VERSION}_Linux_x86_64.zip"
-
-          # Verify it's actually a zip
-          file apigeecli.zip
-
-          unzip apigeecli.zip -d apigeecli_bin
-
-          # Find binary regardless of subdirectory structure
-          APIGEECLI_BIN=$(find apigeecli_bin -name "apigeecli" -type f)
-          echo "Found binary at: $APIGEECLI_BIN"
-
-          mkdir -p $HOME/.apigeecli/bin
-          mv "$APIGEECLI_BIN" $HOME/.apigeecli/bin/apigeecli
-          chmod +x $HOME/.apigeecli/bin/apigeecli
+          curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh -
           echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
 
-          # Verify install
-          $HOME/.apigeecli/bin/apigeecli version
-
-      - name: Install dependencies
+      - name: Install jq
         run: sudo apt-get install -y jq
 
       - name: Deploy Apigee Proxies
@@ -74,21 +52,29 @@ jobs:
             [[ -e "$file" ]] || { echo "No proxy JSON files found in proxies/"; exit 1; }
 
             name=$(basename "$file" .json)
-            folder=$(dirname "$file")
-            filename=$(basename "$file")
-
             echo "Processing Proxy: $name from $file"
 
-            rev=$(apigeecli apis create openapi \
+            # Per official docs: -f takes the full file path, -n is the proxy name
+            create_output=$(apigeecli apis create openapi \
               -n "$name" \
-              -f "$folder" \
-              --oas-name "$filename" \
+              -f "$file" \
               -o "$APIGEE_ORG" \
               -t "$APIGEE_TOKEN" \
-              --format json | jq -r '.revision')
+              --no-warnings 2>&1)
+
+            echo "Create output: $create_output"
+
+            # Get latest revision after import
+            rev=$(apigeecli apis get \
+              -n "$name" \
+              -o "$APIGEE_ORG" \
+              -t "$APIGEE_TOKEN" \
+              --no-warnings 2>&1 | jq -r '.revision[-1]')
+
+            echo "Revision: $rev"
 
             if [[ -z "$rev" || "$rev" == "null" ]]; then
-              echo "ERROR: Failed to import proxy $name — revision is empty"
+              echo "ERROR: Could not determine revision for $name"
               exit 1
             fi
 
@@ -99,7 +85,8 @@ jobs:
               -v "$rev" \
               -o "$APIGEE_ORG" \
               -t "$APIGEE_TOKEN" \
-              --ovr
+              --ovr \
+              --no-warnings
 
           done
           echo "Deployment successful!"
