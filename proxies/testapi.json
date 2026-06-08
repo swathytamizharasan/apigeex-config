@@ -1,0 +1,42 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "testapi",
+    "version": "1.0.0",
+    "description": "Apigee API: testapi"
+  },
+  "paths": {
+    "/*": {
+      "any": {
+        "summary": "ANY /*",
+        "operationId": "testapi_default",
+        "x-google-backend": {
+          "address": "https://testapi.com/sei"
+        }
+      }
+    }
+  },
+  "x-google-auth": {
+    "type": "oauth2"
+  },
+  "x-google-management": {
+    "metrics": [
+      {
+        "name": "requests",
+        "display_name": "API Requests",
+        "value_type": "INT64",
+        "metric_kind": "CUMULATIVE"
+      }
+    ],
+    "quota": {
+      "limits": [
+        {
+          "name": "requests-per-minute",
+          "description": "Requests per minute",
+          "default_value": 20,
+          "max_value": 20
+        }
+      ]
+    }
+  }
+}
