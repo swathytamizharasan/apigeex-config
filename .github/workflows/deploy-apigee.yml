@@ -19,7 +19,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: GCP_PROJECT_NUMBER   # ✅ FIX 1: Declare environment so env-scoped secrets are injected
+    environment: GCP_PROJECT_NUMBER
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -49,39 +49,26 @@ jobs:
           APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
           APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          APIGEE_BIN="$HOME/.apigeecli/bin/apigeecli"
-
           for file in proxies/*.json; do
             [[ -e "$file" ]] || { echo "No proxy JSON files found in proxies/"; exit 1; }
             name=$(basename "$file" .json)
             echo "Processing Proxy: $name"
 
-            # ✅ FIX 2: Use 'apis create' with --oasfile for OpenAPI spec JSON files,
-            # not 'apis create bundle' which expects a zip/directory bundle
-            create_output=$($APIGEE_BIN apis create \
+            # Use the correct subcommand: apis create openapi
+            rev=$(apigeecli apis create openapi \
               -n "$name" \
               --oasfile "$file" \
               -o "$APIGEE_ORG" \
               -t "$APIGEE_TOKEN" \
-              --format json 2>&1) || true
-
-            echo "Create output: $create_output"
-
-            # Get the latest revision (works whether just created or already existed)
-            rev=$($APIGEE_BIN apis get \
-              -n "$name" \
-              -o "$APIGEE_ORG" \
-              -t "$APIGEE_TOKEN" \
-              --format json | jq -r '.revision[-1]')  # ✅ FIX 3: correct jq for array last element
+              --format json | jq -r '.revision')
 
             if [[ -z "$rev" || "$rev" == "null" ]]; then
-              echo "ERROR: Could not determine revision for $name"
+              echo "ERROR: Failed to import proxy $name, revision is empty"
               exit 1
             fi
 
-            # ✅ FIX 4: typo fixed "reviasion" -> "revision"
             echo "Deploying revision $rev of $name to dev..."
-            $APIGEE_BIN apis deploy \
+            apigeecli apis deploy \
               -n "$name" \
               -e dev \
               -v "$rev" \
@@ -89,5 +76,4 @@ jobs:
               -t "$APIGEE_TOKEN" \
               --ovr
           done
-
           echo "Deployment successful!"
