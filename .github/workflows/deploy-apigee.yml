@@ -30,9 +30,10 @@ jobs:
         uses: 'google-github-actions/auth@v2'
         with:
           token_format: 'access_token'
-          # Reverted to secrets. to ensure values are securely decrypted
-          workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
+          # Reverting to 'secrets' as these are typically stored in the Secrets tab.
+          # If you specifically moved them to the 'Variables' tab, change this back to 'vars'.
+          workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
 
       - name: Set up apigeecli
         run: |
@@ -44,14 +45,16 @@ jobs:
           APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
           APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          # Loop through JSON files in proxies/ and deploy
+          # Loop through proxies folder
           for file in proxies/*.json; do
+            [[ -e "$file" ]] || continue
             name=$(basename "$file" .json)
-            echo "Deploying Proxy: $name"
+            echo "Processing Proxy: $name"
             
-            # 1. Import the API proxy bundle (using the correct 'apis' command)
-            apigeecli apis bundle import -n "$name" -f "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN"
+            # 1. Import the OpenAPI spec as a new revision. 
+            # apigeecli apis create --oasfile handles the conversion and import automatically.
+            rev=$(apigeecli apis create -n "$name" --oasfile "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --format json | jq -r '.revision')
             
-            # 2. Deploy it to the 'dev' environment (using the correct 'apis' command)
-            apigeecli apis deploy -n "$name" -e dev -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
+            # 2. Deploy the specific revision to the 'dev' environment
+            apigeecli apis deploy -n "$name" -e dev -v "$rev" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
           done
