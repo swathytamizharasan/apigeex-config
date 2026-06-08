@@ -1,4 +1,3 @@
-
 name: Deploy to Apigee X
 
 on:
@@ -52,8 +51,11 @@ jobs:
             
             # Import the bundle
             apigeecli proxies bundle import -n "$name" -f "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN"
+            # Create Proxy from OpenAPI specification
+            apigeecli apis create -n "$name" --oasfile "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN"
             
             # Deploy to the environment specified in the PR (defaulting to dev for this example)
             # In a full setup, we'd parse the environment from the file or metadata
             apigeecli proxies deploy -n "$name" -e dev -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
+            apigeecli apis deploy -n "$name" -e dev -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
           done
