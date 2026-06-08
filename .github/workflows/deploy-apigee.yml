@@ -1,3 +1,4 @@
+
 name: Deploy to Apigee X
 
 on:
@@ -19,6 +20,8 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -28,9 +31,9 @@ jobs:
         uses: 'google-github-actions/auth@v2'
         with:
           token_format: 'access_token'
-          # This uses secrets you set in GitHub Settings > Secrets > Actions
-          workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
+          # Updated to use 'vars' context for Repository Variables
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: apigee-deployer@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
 
       - name: Set up apigeecli
         run: |
@@ -40,7 +43,7 @@ jobs:
       - name: Deploy Apigee Proxies
         env:
           APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
-          APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
+          APIGEE_ORG: ${{ vars.GCP_PROJECT_ID }}
         run: |
           # Loop through JSON files in proxies/ and deploy
           for file in proxies/*.json; do
