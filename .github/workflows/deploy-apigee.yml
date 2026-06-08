@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -30,13 +31,12 @@ jobs:
         uses: 'google-github-actions/auth@v2'
         with:
           token_format: 'access_token'
-          # Reverting to 'secrets' as these are typically stored in the Secrets tab.
-          # If you specifically moved them to the 'Variables' tab, change this back to 'vars'.
           workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
 
       - name: Set up apigeecli
         run: |
+          rm -rf $HOME/.apigeecli
           curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh
           echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
 
@@ -45,16 +45,29 @@ jobs:
           APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
           APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          # Loop through proxies folder
+          # Ensure jq is available for parsing JSON responses
+          sudo apt-get install -y jq
+          APIGEE_BIN="$HOME/.apigeecli/bin/apigeecli"
+          
           for file in proxies/*.json; do
             [[ -e "$file" ]] || continue
             name=$(basename "$file" .json)
             echo "Processing Proxy: $name"
             
-            # 1. Import the OpenAPI spec as a new revision. 
-            # apigeecli apis create --oasfile handles the conversion and import automatically.
-            rev=$(apigeecli apis create -n "$name" --oasfile "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --format json | jq -r '.revision')
+            # 1. Attempt to create/import the bundle
+            # We capture output to handle cases where it might already exist
+            create_output=$($APIGEE_BIN apis create bundle -n "$name" -f "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --format json 2>&1)
             
-            # 2. Deploy the specific revision to the 'dev' environment
-            apigeecli apis deploy -n "$name" -e dev -v "$rev" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
+            # 2. Extract revision (if created, use that; otherwise get the latest)
+            if echo "$create_output" | grep -q "revision"; then
+               rev=$(echo "$create_output" | jq -r '.revision')
+            else
+               echo "Proxy likely exists, fetching latest revision..."
+               rev=$($APIGEE_BIN apis get -n "$name" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --format json | jq -r '.revision | last')
+            fi
+            
+            # 3. Deploy the identified revision
+            echo "Deploying reviasion $rev to dev..."
+            $APIGEE_BIN apis deploy -n "$name" -e dev -v "$rev" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
           done
+          echo "Deployment successful!"
