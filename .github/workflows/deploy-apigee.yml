@@ -1,0 +1,56 @@
+name: Deploy to Apigee X
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'proxies/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'proxies/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          token_format: 'access_token'
+          # This uses secrets you set in GitHub Settings > Secrets > Actions
+          workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'apigee-deployer@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: Set up apigeecli
+        run: |
+          curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh
+          echo "$HOME/.apigeecli/bin" >> $GITHUB_PATH
+
+      - name: Deploy Apigee Proxies
+        env:
+          APIGEE_TOKEN: ${{ steps.auth.outputs.access_token }}
+          APIGEE_ORG: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          # Loop through JSON files in proxies/ and deploy
+          for file in proxies/*.json; do
+            name=$(basename "$file" .json)
+            echo "Deploying Proxy: $name"
+            
+            # Import the bundle
+            apigeecli proxies bundle import -n "$name" -f "$file" -o "$APIGEE_ORG" -t "$APIGEE_TOKEN"
+            
+            # Deploy to the environment specified in the PR (defaulting to dev for this example)
+            # In a full setup, we'd parse the environment from the file or metadata
+            apigeecli proxies deploy -n "$name" -e dev -o "$APIGEE_ORG" -t "$APIGEE_TOKEN" --ovr
+          done
