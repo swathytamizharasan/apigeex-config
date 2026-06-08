@@ -51,19 +51,24 @@ jobs:
         run: |
           for file in proxies/*.json; do
             [[ -e "$file" ]] || { echo "No proxy JSON files found in proxies/"; exit 1; }
-            name=$(basename "$file" .json)
-            echo "Processing Proxy: $name"
 
-            # Use the correct subcommand: apis create openapi
+            name=$(basename "$file" .json)
+            folder=$(dirname "$file")
+            filename=$(basename "$file")
+
+            echo "Processing Proxy: $name from $file"
+
+            # -f = folder path, --oas-name = filename within that folder
             rev=$(apigeecli apis create openapi \
               -n "$name" \
-              --oasfile "$file" \
+              -f "$folder" \
+              --oas-name "$filename" \
               -o "$APIGEE_ORG" \
               -t "$APIGEE_TOKEN" \
               --format json | jq -r '.revision')
 
             if [[ -z "$rev" || "$rev" == "null" ]]; then
-              echo "ERROR: Failed to import proxy $name, revision is empty"
+              echo "ERROR: Failed to import proxy $name — revision is empty"
               exit 1
             fi
 
@@ -75,5 +80,6 @@ jobs:
               -o "$APIGEE_ORG" \
               -t "$APIGEE_TOKEN" \
               --ovr
+
           done
           echo "Deployment successful!"
