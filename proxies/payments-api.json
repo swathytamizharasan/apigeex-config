@@ -3,19 +3,9 @@
   "info": {
     "title": "payments-api",
     "version": "1.0.0",
-    "description": "Apigee API: payments-api"
+    "description": "Partner payments API"
   },
-  "paths": {
-    "/api/v1/items": {
-      "get": {
-        "summary": "GET /api/v1/items",
-        "operationId": "payments-api_list",
-        "x-google-backend": {
-          "address": "http://backend.example.com"
-        }
-      }
-    }
-  },
+  "paths": {},
   "x-google-auth": {
     "type": "oauth2"
   },
@@ -23,20 +13,199 @@
     "metrics": [
       {
         "name": "requests",
-        "display_name": "API Requests",
+        "display_name": "Total Requests",
         "value_type": "INT64",
         "metric_kind": "CUMULATIVE"
+      },
+      {
+        "name": "errors",
+        "display_name": "Error Count",
+        "value_type": "INT64",
+        "metric_kind": "CUMULATIVE"
+      },
+      {
+        "name": "request_latencies",
+        "display_name": "E2E Request Latency",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "backend_latencies",
+        "display_name": "Target Backend Latency",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "request_sizes",
+        "display_name": "Request Payload Size",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "response_sizes",
+        "display_name": "Response Payload Size",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
       }
     ],
     "quota": {
       "limits": [
         {
-          "name": "requests-per-minute",
-          "description": "Requests per minute",
-          "default_value": 1000,
-          "max_value": 1000
+          "name": "payments-api-quota",
+          "description": "Rate limit for payments-api",
+          "default_value": 500,
+          "max_value": 500
         }
       ]
     }
-  }
+  },
+  "x-apigee-proxy-endpoints": [
+    {
+      "name": "default",
+      "basePath": "/",
+      "flows": [
+        {
+          "name": "PreFlow",
+          "request": {
+            "steps": [
+              {
+                "name": "payments-api-Spike-Arrest"
+              },
+              {
+                "name": "payments-api-Verify-OAuth-v2"
+              },
+              {
+                "name": "payments-api-Regex-Protection"
+              },
+              {
+                "name": "payments-api-Quota"
+              },
+              {
+                "name": "payments-api-RAF-Content-Type-Check",
+                "condition": "(request.verb != \"GET\") and (request.header.Content-Type == null or request.header.Content-Type != \"application/json\")"
+              }
+            ]
+          },
+          "response": {
+            "steps": []
+          }
+        }
+      ],
+      "postFlow": {
+        "request": {
+          "steps": []
+        },
+        "response": {
+          "steps": [
+            {
+              "name": "payments-api-Message-Logging"
+            }
+          ]
+        }
+      },
+      "faultRules": [
+        {
+          "name": "Unknown-Resource",
+          "condition": "messaging.runtime.RouteNotFound = true",
+          "steps": [
+            {
+              "name": "payments-api-RAF-Unknown-Resource"
+            }
+          ]
+        },
+        {
+          "name": "Quota-Violation",
+          "condition": "ratelimit.QuotaViolation = true",
+          "steps": [
+            {
+              "name": "payments-api-RAF-Quota-Exceeded"
+            }
+          ]
+        }
+      ],
+      "targetEndpoint": "default"
+    }
+  ],
+  "x-apigee-target-endpoints": [
+    {
+      "name": "default",
+      "url": "https://api.ecample.com"
+    }
+  ],
+  "x-apigee-policies": [
+    {
+      "name": "payments-api-Spike-Arrest",
+      "type": "SpikeArrest",
+      "properties": {
+        "rate": "30ps"
+      }
+    },
+    {
+      "name": "payments-api-Verify-OAuth-v2",
+      "type": "OAuthV2",
+      "properties": {
+        "operation": "VerifyAccessToken"
+      }
+    },
+    {
+      "name": "payments-api-Regex-Protection",
+      "type": "RegularExpressionProtection",
+      "properties": {
+        "source": "request",
+        "ignoreCase": true
+      }
+    },
+    {
+      "name": "payments-api-Quota",
+      "type": "Quota",
+      "properties": {
+        "allow": {
+          "count": 500
+        },
+        "interval": 1,
+        "timeUnit": "minute"
+      }
+    },
+    {
+      "name": "payments-api-RAF-Content-Type-Check",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 415,
+          "reasonPhrase": "Unsupported Media Type",
+          "content": "{\"error\": \"Content-Type must be application/json\"}"
+        }
+      }
+    },
+    {
+      "name": "payments-api-Message-Logging",
+      "type": "MessageLogging",
+      "properties": {
+        "logLevel": "INFO",
+        "message": "API={apiproxy.name}, Client={client.ip}, Latency={target.response.time}"
+      }
+    },
+    {
+      "name": "payments-api-RAF-Unknown-Resource",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 404,
+          "reasonPhrase": "Not Found",
+          "content": "{\"error\": \"Unknown Resource\"}"
+        }
+      }
+    },
+    {
+      "name": "payments-api-RAF-Quota-Exceeded",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 429,
+          "reasonPhrase": "Too Many Requests",
+          "content": "{\"error\": \"API Quota Exceeded\"}"
+        }
+      }
+    }
+  ]
 }
