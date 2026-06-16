@@ -1,0 +1,211 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "josn-placeholder-api",
+    "version": "1.0.0",
+    "description": "todos"
+  },
+  "paths": {},
+  "x-google-auth": {
+    "type": "oauth2"
+  },
+  "x-google-management": {
+    "metrics": [
+      {
+        "name": "requests",
+        "display_name": "Total Requests",
+        "value_type": "INT64",
+        "metric_kind": "CUMULATIVE"
+      },
+      {
+        "name": "errors",
+        "display_name": "Error Count",
+        "value_type": "INT64",
+        "metric_kind": "CUMULATIVE"
+      },
+      {
+        "name": "request_latencies",
+        "display_name": "E2E Request Latency",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "backend_latencies",
+        "display_name": "Target Backend Latency",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "request_sizes",
+        "display_name": "Request Payload Size",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      },
+      {
+        "name": "response_sizes",
+        "display_name": "Response Payload Size",
+        "value_type": "DISTRIBUTION",
+        "metric_kind": "DELTA"
+      }
+    ],
+    "quota": {
+      "limits": [
+        {
+          "name": "josn-placeholder-api-quota",
+          "description": "Rate limit for josn-placeholder-api",
+          "default_value": 500,
+          "max_value": 500
+        }
+      ]
+    }
+  },
+  "x-apigee-proxy-endpoints": [
+    {
+      "name": "default",
+      "basePath": "/",
+      "flows": [
+        {
+          "name": "PreFlow",
+          "request": {
+            "steps": [
+              {
+                "name": "josn-placeholder-api-Spike-Arrest"
+              },
+              {
+                "name": "josn-placeholder-api-Verify-OAuth-v2"
+              },
+              {
+                "name": "josn-placeholder-api-Regex-Protection"
+              },
+              {
+                "name": "josn-placeholder-api-Quota"
+              },
+              {
+                "name": "josn-placeholder-api-RAF-Content-Type-Check",
+                "condition": "(request.verb != \"GET\") and (request.header.Content-Type == null or request.header.Content-Type != \"application/json\")"
+              }
+            ]
+          },
+          "response": {
+            "steps": []
+          }
+        }
+      ],
+      "postFlow": {
+        "request": {
+          "steps": []
+        },
+        "response": {
+          "steps": [
+            {
+              "name": "josn-placeholder-api-Message-Logging"
+            }
+          ]
+        }
+      },
+      "faultRules": [
+        {
+          "name": "Unknown-Resource",
+          "condition": "messaging.runtime.RouteNotFound = true",
+          "steps": [
+            {
+              "name": "josn-placeholder-api-RAF-Unknown-Resource"
+            }
+          ]
+        },
+        {
+          "name": "Quota-Violation",
+          "condition": "ratelimit.QuotaViolation = true",
+          "steps": [
+            {
+              "name": "josn-placeholder-api-RAF-Quota-Exceeded"
+            }
+          ]
+        }
+      ],
+      "targetEndpoint": "default"
+    }
+  ],
+  "x-apigee-target-endpoints": [
+    {
+      "name": "default",
+      "url": "https://jsonplaceholder.typicode.com/todos"
+    }
+  ],
+  "x-apigee-policies": [
+    {
+      "name": "josn-placeholder-api-Spike-Arrest",
+      "type": "SpikeArrest",
+      "properties": {
+        "rate": "30ps"
+      }
+    },
+    {
+      "name": "josn-placeholder-api-Verify-OAuth-v2",
+      "type": "OAuthV2",
+      "properties": {
+        "operation": "VerifyAccessToken"
+      }
+    },
+    {
+      "name": "josn-placeholder-api-Regex-Protection",
+      "type": "RegularExpressionProtection",
+      "properties": {
+        "source": "request",
+        "ignoreCase": true
+      }
+    },
+    {
+      "name": "josn-placeholder-api-Quota",
+      "type": "Quota",
+      "properties": {
+        "allow": {
+          "count": 500
+        },
+        "interval": 1,
+        "timeUnit": "minute"
+      }
+    },
+    {
+      "name": "josn-placeholder-api-RAF-Content-Type-Check",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 415,
+          "reasonPhrase": "Unsupported Media Type",
+          "content": "{\"error\": \"Content-Type must be application/json\"}"
+        }
+      }
+    },
+    {
+      "name": "josn-placeholder-api-Message-Logging",
+      "type": "MessageLogging",
+      "properties": {
+        "logLevel": "INFO",
+        "message": "API={apiproxy.name}, Client={client.ip}, Latency={target.response.time}"
+      }
+    },
+    {
+      "name": "josn-placeholder-api-RAF-Unknown-Resource",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 404,
+          "reasonPhrase": "Not Found",
+          "content": "{\"error\": \"Unknown Resource\"}"
+        }
+      }
+    },
+    {
+      "name": "josn-placeholder-api-RAF-Quota-Exceeded",
+      "type": "RaiseFault",
+      "properties": {
+        "faultResponse": {
+          "statusCode": 429,
+          "reasonPhrase": "Too Many Requests",
+          "content": "{\"error\": \"API Quota Exceeded\"}"
+        }
+      }
+    }
+  ]
+}
